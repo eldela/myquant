@@ -448,8 +448,13 @@ def _is_due_weekly(today: date, last_fetch: Optional[date]) -> bool:
 
 
 def _is_due_monthly(today: date, last_fetch: Optional[date]) -> bool:
-    """Return whether a monthly series should be fetched today."""
-    if today.day > 5:
+    """Return whether a monthly series should be fetched today.
+
+    Most FRED monthly series are released mid-month (CPI ~10-13th,
+    unemployment ~first Friday, consumer sentiment ~mid-month).
+    We use a window of 1st–15th to cover all common release dates.
+    """
+    if today.day > 15:
         return False
     if last_fetch is None:
         return True
