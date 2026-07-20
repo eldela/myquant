@@ -22,6 +22,17 @@ from myquant.ecos_db import (
     get_series_info as ecos_get_series_info,
     init_db as ecos_init_db,
 )
+from myquant.treasury import Treasury, TreasuryAPIError
+from myquant.treasury_db import (
+    fetch_all as treasury_fetch_all,
+    fetch_auctions as treasury_fetch_auctions,
+    fetch_debt as treasury_fetch_debt,
+    get_auction_history as treasury_get_auction_history,
+    get_debt_history as treasury_get_debt_history,
+    get_latest_auction as treasury_get_latest_auction,
+    get_latest_debt as treasury_get_latest_debt,
+    init_db as treasury_init_db,
+)
 
 __all__ = [
     "Fred",
@@ -44,4 +55,14 @@ __all__ = [
     "ecos_get_latest",
     "ecos_get_history",
     "ecos_get_series_info",
+    "Treasury",
+    "TreasuryAPIError",
+    "treasury_init_db",
+    "treasury_fetch_debt",
+    "treasury_fetch_auctions",
+    "treasury_fetch_all",
+    "treasury_get_debt_history",
+    "treasury_get_auction_history",
+    "treasury_get_latest_debt",
+    "treasury_get_latest_auction",
 ]
