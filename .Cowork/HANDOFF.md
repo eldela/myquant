@@ -4,36 +4,58 @@
 
 ## What This Project Is
 
-A personal macro-economic data collection system. Fetches financial/economic data from three government open APIs and stores everything in local SQLite databases for analysis.
+A personal macro-economic data collection system. Fetches financial/economic data from three government open APIs and stores everything in a **single unified SQLite database** (`macro.db`) for analysis.
 
-**Repository:** https://github.com/eldela/myquant  
-**Stack:** Python 3.12, pandas, requests, python-dotenv, sqlite3  
+**Repository:** https://github.com/eldela/myquant
+**Stack:** Python 3.10+, pandas, requests, python-dotenv, sqlite3
 **Virtual env:** `~/projects/myquant/src/.venv`
+
+## Recent Major Change (2026-07-20)
+
+The three previously separate database modules (`fred_db.py`, `ecos_db.py`, `treasury_db.py`) have been **unified** into a single `myquant.db` package backed by one `macro.db` file. The old modules remain as **deprecated shims** that delegate to the new unified module.
+
+**What changed:**
+- `fred.db`, `ecos.db`, `treasury.db` → single `macro.db`
+- `fred_db.py`, `ecos_db.py`, `treasury_db.py` → deprecated shims (emit `DeprecationWarning`)
+- New unified module: `myquant/db/` package + `myquant/macro_db.py` facade
+- New unified CLI: `python -m myquant.macro_db`
+- Legacy data can be migrated via `python -m myquant.macro_db migrate`
 
 ## Directory Structure
 
 ```
 myquant/
-├── .Cowork/          ← This file
-│   └── HANDOFF.md
-├── context_backup/   ← API specs and OpenCode prompts (reference only)
-├── data/             ← SQLite databases (git-ignored)
-│   ├── fred.db
-│   ├── ecos.db
-│   └── treasury.db
-└── src/              ← Main package (git repo)
-    ├── .env          ← API keys (FRED_API, ECOS_API) — NEVER commit
+├── .Cowork/
+│   └── HANDOFF.md          ← This file
+├── data/                    ← SQLite databases (git-ignored)
+│   ├── macro.db             ← Unified database (NEW)
+│   ├── fred.db              ← Legacy (migrate to macro.db)
+│   ├── ecos.db              ← Legacy (migrate to macro.db)
+│   └── treasury.db          ← Legacy (migrate to macro.db)
+└── src/                     ← Main package (git repo)
+    ├── .env                 ← API keys (FRED_API, ECOS_API) — NEVER commit
     ├── .gitignore
     ├── pyproject.toml
     ├── requirements.txt
+    ├── tests/
+    │   └── test_macro_db.py ← 55 unit tests
     └── myquant/
-        ├── __init__.py
-        ├── fred.py        ← FRED API client
-        ├── fred_db.py     ← FRED SQLite layer + CLI
-        ├── ecos.py        ← ECOS API client
-        ├── ecos_db.py     ← ECOS SQLite layer + CLI
-        ├── treasury.py    ← Treasury Fiscal Data client
-        └── treasury_db.py ← Treasury SQLite layer + CLI
+        ├── __init__.py      ← Lazy imports for deprecated shims
+        ├── fred.py          ← FRED API client (unchanged)
+        ├── ecos.py          ← ECOS API client (unchanged)
+        ├── treasury.py      ← Treasury API client (unchanged)
+        ├── fred_db.py       ← DEPRECATED shim → macro_db
+        ├── ecos_db.py       ← DEPRECATED shim → macro_db
+        ├── treasury_db.py   ← DEPRECATED shim → macro_db
+        ├── macro_db.py      ← Facade re-exporting from myquant.db
+        └── db/              ← Unified database package
+            ├── __init__.py  ← Re-exports all public names
+            ├── core.py      ← Helpers, schema, CORE_SERIES, init_db, fetch/query API
+            ├── fred.py      ← FRED-specific fetch logic
+            ├── ecos.py      ← ECOS-specific fetch logic
+            ├── treasury.py  ← Treasury fetch/query functions
+            ├── migration.py ← Legacy DB → macro.db migration
+            └── cli.py       ← CLI entry point (_main, _status)
 ```
 
 ## Data Sources
@@ -43,25 +65,22 @@ myquant/
 - **API:** https://api.stlouisfed.org/fred/
 - **Auth:** API key in query param (`api_key`)
 - **Key:** Stored in `.env` as `FRED_API` or `FRED_API_KEY`
-- **DB:** `data/fred.db`
-- **CLI:** `python -m myquant.fred_db {init|fetch-all|fetch-due|status}`
+- **DB table:** `series` (source='FRED'), `observations`, `update_log`
 
-18 core series (daily + monthly + quarterly):
-- Interest rates: DGS10, DGS2, T10Y2Y, T10YIE, BAMLH0A0HYM2
+19 core series (daily + monthly + quarterly):
+- Interest rates: FEDFUNDS, DGS10, DGS2, T10Y2Y, T10YIE, BAMLH0A0HYM2
 - Inflation: CPIAUCSL, CPILFESL
 - FX: DTWEXBGS (dollar index), DEXKOUS (KRW/USD)
-- Commodities: DCOILWTICO (WTI crude)
+- Commodities: GOLDAMGBD228NLBM (gold), DCOILWTICO (WTI crude)
 - Market: SP500, VIXCLS
 - Macro: GDPC1 (GDP), UNRATE, PAYEMS, UMCSENT, M2SL
-- Note: GOLDAMGBD228NLBM was removed — FRED doesn't have gold spot prices
 
 ### 2. ECOS (Bank of Korea Economic Statistics)
 
 - **API:** http://ecos.bok.or.kr/api (HTTP only, key in URL path)
 - **Auth:** API key embedded in URL path
 - **Key:** Stored in `.env` as `ECOS_API` or `ECOS_SERVICE_KEY`
-- **DB:** `data/ecos.db`
-- **CLI:** `python -m myquant.ecos_db {init|fetch-all|fetch-due|status}`
+- **DB table:** `series` (source='ECOS'), `observations`, `update_log`
 
 9 core series (monthly + quarterly):
 - 901Y009_0: 소비자물가지수 총지수
@@ -78,16 +97,32 @@ myquant/
 
 - **API:** https://api.fiscaldata.treasury.gov/services/api/fiscal_service/
 - **Auth:** None required (fully public)
-- **DB:** `data/treasury.db`
-- **CLI:** `python -m myquant.treasury_db {init|fetch-debt|fetch-auctions|fetch-all|status}`
+- **DB tables:** `debt`, `auctions`, `fetch_log` (separate from series schema)
 
 2 datasets:
 - Debt to the Penny: ~8,300 rows (1993-present), daily U.S. public debt
 - Treasury Auctions: ~2,900 rows (2020-present), Bills/Notes/Bonds/TIPS/FRNs
 
+## Unified Database Schema (macro.db)
+
+```
+series          — FRED + ECOS metadata (id, title, source, frequency, cycle, units, ...)
+observations    — Time-series data points (series_id, date, value, realtime_start, realtime_end)
+update_log      — Fetch history for series-based data
+debt            — Treasury Debt to the Penny (record_date, amounts)
+auctions        — Treasury auction results (auction_date, cusip, rates, amounts)
+fetch_log       — Treasury fetch history
+```
+
+Key design decisions:
+- `source` column in `series` table: 'FRED' or 'ECOS'
+- `cycle` column in `series` table: 'D', 'W', 'M', 'Q', 'A' (for ECOS date formatting)
+- Treasury tables are separate (not series-shaped data)
+- ECOS `realtime_start`/`realtime_end` are set to NULL during migration (ECOS has no realtime metadata)
+
 ## fetch_due Logic
 
-Each module has a `fetch_due()` that intelligently decides what to fetch:
+The unified `fetch_due()` preserves source-specific scheduling:
 
 | Source | Frequency | fetch_due window |
 |--------|-----------|-----------------|
@@ -98,36 +133,84 @@ Each module has a `fetch_due()` that intelligently decides what to fetch:
 | ECOS Quarterly | Q | Within 30 days of quarter end |
 | Treasury | on-demand | Incremental (max stored date + 1) |
 
-## How to Run
+**Important:** FRED and ECOS have different monthly due-day thresholds (15 vs 5). This is preserved in the unified module.
+
+## CLI Commands
 
 ```bash
 cd ~/projects/myquant/src
 source .venv/bin/activate
 
-# FRED
-python -m myquant.fred_db fetch-due
-python -m myquant.fred_db status
+# Initialize database (create tables + seed 28 series)
+python -m myquant.macro_db init
 
-# ECOS
-python -m myquant.ecos_db fetch-due
-python -m myquant.ecos_db status
+# Fetch all data (FRED + ECOS + Treasury)
+python -m myquant.macro_db fetch-all
 
-# Treasury
-python -m myquant.treasury_db fetch-all
-python -m myquant.treasury_db status
+# Fetch specific source
+python -m myquant.macro_db fetch-all --source fred
+python -m myquant.macro_db fetch-all --source ecos
+
+# Fetch only due series (respects frequency scheduling)
+python -m myquant.macro_db fetch-due
+python -m myquant.macro_db fetch-due --source fred
+
+# Treasury-specific commands
+python -m myquant.macro_db fetch-debt
+python -m myquant.macro_db fetch-auctions
+
+# Show database status
+python -m myquant.macro_db status
+
+# Migrate legacy databases
+python -m myquant.macro_db migrate
+
+# Custom DB path
+python -m myquant.macro_db init --db-path /path/to/custom.db
 ```
+
+## Migration from Legacy Databases
+
+If you have existing `fred.db`, `ecos.db`, `treasury.db` files:
+
+```bash
+python -m myquant.macro_db migrate --source-dir ~/projects/myquant/data
+```
+
+Migration is **idempotent** — running twice produces no duplicate rows. It:
+1. Checks for ID collisions between FRED and ECOS
+2. Copies series, observations, update_log from fred.db and ecos.db
+3. Copies debt, auctions, fetch_log from treasury.db
+4. Sets ECOS `realtime_start`/`realtime_end` to NULL (no realtime metadata)
 
 ## Known Issues
 
 1. **ECOS uses HTTP only** — API key is exposed in URL path. No HTTPS available from Bank of Korea.
 2. **FRED rate limits** — 429 errors possible if fetching too many series rapidly. Add delays if needed.
 3. **ECOS item codes** — Must be looked up via `StatisticItemList` before adding new series. Codes are not intuitive (e.g., "0101000" for base rate, "ABA1" for M1).
-4. **Gold price** — Not available from FRED. Would need a separate API (e.g., goldapi.io).
-5. **No automated scheduling yet** — `fetch_due()` exists but needs cron/launchd to run periodically.
+4. **No automated scheduling yet** — `fetch_due()` exists but needs cron/launchd to run periodically.
 
 ## What to Do Next
 
-- **Schedule periodic fetches:** Set up macOS launchd or cron to run `fetch-due` daily
-- **Add gold price API:** goldapi.io or similar, store in a separate SQLite DB
+- **Schedule periodic fetches:** Set up macOS launchd or cron to run `python -m myquant.macro_db fetch-due` daily
+- **Add gold price API:** goldapi.io or similar, store in macro.db
 - **Dashboard/analysis:** Build analysis scripts on top of the collected data
 - **ECOS expansion:** Add more Korean series (found via StatisticTableList search)
+- **Remove deprecated shims:** Once all external scripts are updated to use `myquant.macro_db`, remove `fred_db.py`, `ecos_db.py`, `treasury_db.py`
+
+## Test Suite
+
+```bash
+cd ~/projects/myquant/src
+source .venv/bin/activate
+pytest tests/ -v
+```
+
+55 tests covering:
+- Schema creation and validation (10 tests)
+- FRED fetch with mocked API (6 tests)
+- ECOS fetch with mocked API (7 tests)
+- Treasury fetch with mocked API (5 tests)
+- Migration idempotency (5 tests)
+- CLI commands (10 tests)
+- Query functions and fetch window resolution (5 tests)
