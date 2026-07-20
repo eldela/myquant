@@ -1,0 +1,9 @@
+.env
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints
+.DS_Store
+test_fred.py
+.omo/
+.venv/
