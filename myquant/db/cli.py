@@ -19,6 +19,14 @@ from myquant.db.core import (
 )
 from myquant.db.migration import migrate_legacy_dbs
 from myquant.db.treasury import fetch_auctions, fetch_debt
+from myquant.db.market import (
+    init_market_tables,
+    seed_watchlist,
+    fetch_market_data,
+    fetch_all_market_data,
+    get_market_history,
+    get_market_status,
+)
 
 
 def _status(db_path: Path = DEFAULT_DB_PATH) -> None:
@@ -81,6 +89,16 @@ def _main() -> None:
 
     subparsers.add_parser("status", help="Show database status")
 
+    # Market commands
+    subparsers.add_parser("init-market", help="Initialize market tables and seed watchlist")
+    subparsers.add_parser("fetch-market", help="Fetch all market data for watchlist symbols")
+    subparsers.add_parser("market-status", help="Show market monitoring status")
+
+    market_history_p = subparsers.add_parser(
+        "market-history", help="Show price history for a symbol"
+    )
+    market_history_p.add_argument("symbol", help="Symbol to query (e.g. KOSPI, SPY)")
+
     migrate_p = subparsers.add_parser(
         "migrate", help="Migrate data from legacy DBs into macro.db"
     )
@@ -107,6 +125,23 @@ def _main() -> None:
         fetch_auctions(db_path=args.db_path)
     elif args.command == "status":
         _status(args.db_path)
+    elif args.command == "init-market":
+        init_market_tables(args.db_path)
+        seed_watchlist(args.db_path)
+        print(f"Initialized market tables and seeded watchlist at {args.db_path}")
+    elif args.command == "fetch-market":
+        results = fetch_all_market_data(args.db_path)
+        total = sum(results.values())
+        print(f"Fetched {len(results)} symbols, {total} total records")
+    elif args.command == "market-status":
+        df = get_market_status(args.db_path)
+        print(df.to_string(index=False))
+    elif args.command == "market-history":
+        df = get_market_history(args.symbol, days=90, db_path=args.db_path)
+        if df.empty:
+            print(f"No data found for {args.symbol}")
+        else:
+            print(df.to_string(index=False))
     elif args.command == "migrate":
         migrate_legacy_dbs(args.db_path, args.source_dir)
     else:  # pragma: no cover — argparse handles this

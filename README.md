@@ -11,6 +11,8 @@
 | [FRED](https://fred.stlouisfed.org/) | 🇺🇸 미국 | 19개 (금리, 물가, 환율, 주식, 고용, 통화) | `data/macro.db` |
 | [ECOS](https://ecos.bok.or.kr/api/) | 🇰🇷 한국 | 9개 (물가, 금리, GDP, 무역, 심리) | `data/macro.db` |
 | [Treasury Fiscal Data](https://fiscaldata.treasury.gov/) | 🇺🇸 미국 | 2개 (부채 추이, 국채 입찰) | `data/macro.db` |
+| [pykrx](https://github.com/sharebook-kr/pykrx) | 🇰🇷 한국 | 5개 (코스피, 코스닥, KODEX, TIGER) | `data/macro.db` |
+| [yfinance](https://github.com/ranaroussi/yfinance) | 🇺🇸 미국 | 10개 (S&P500, NASDAQ, ETF) | `data/macro.db` |
 
 ## 빠른 시작
 
@@ -21,12 +23,20 @@ source .venv/bin/activate
 # .env 설정
 echo "FRED_API=your_key" >> .env
 echo "ECOS_API=your_key" >> .env
+echo "KRX_ID=your_id" >> .env
+echo "KRX_PW=your_pw" >> .env
 
 # DB 초기화 (테이블 생성 + 28개 시리즈 등록)
 python -m myquant.macro_db init
 
+# 시장 데이터 초기화 (watchlist 15개 종목 등록)
+python -m myquant.db init-market
+
 # 전체 데이터 수집 (FRED + ECOS + Treasury)
 python -m myquant.macro_db fetch-all
+
+# 시장 데이터 수집 (한국 pykrx + 미국 yfinance)
+python -m myquant.db fetch-market
 
 # 갱신이 필요한 시리즈만 수집
 python -m myquant.macro_db fetch-due
@@ -104,6 +114,10 @@ python -m myquant.macro_db status
 | `fetch-auctions` | Treasury 국채 입찰 결과를 가져와 `auctions` 테이블에 저장합니다. | `--db-path` |
 | `status` | 시리즈별 관측값 개수, 마지막 성공한 fetch 시각, 마지막 추가 row 수를 출력합니다. | `--db-path` |
 | `migrate` | 레거시 DB의 데이터를 `macro.db`로 이전합니다. | `--source-dir`, `--db-path` |
+| `init-market` | 시장 테이블을 생성하고 watchlist를 초기화합니다. | `--db-path` |
+| `fetch-market` | watchlist의 모든 종목 가격 데이터를 수집합니다. | `--db-path` |
+| `market-status` | 시장 모니터링 상태를 확인합니다. | `--db-path` |
+| `market-history <symbol>` | 특정 종목의 가격 이력을 조회합니다. | `--db-path` |
 
 ### 갱신 일정
 
@@ -213,6 +227,58 @@ Treasury 데이터셋별 fetch 이력.
 | `message` | TEXT | 메시지 |
 | `updated_at` | TEXT | 로그 생성 시각 |
 
+### 7. `market_prices`
+
+한국/미국 지수 및 ETF 가격 데이터.
+
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| `symbol` | TEXT NOT NULL | 종목 코드 (예: `KOSPI`, `SPY`) |
+| `date` | TEXT NOT NULL | ISO 8601 날짜 |
+| `open` | REAL | 시가 |
+| `high` | REAL | 고가 |
+| `low` | REAL | 저가 |
+| `close` | REAL | 종가 |
+| `volume` | INTEGER | 거래량 |
+| `adj_close` | REAL | 수정 종가 |
+| `source` | TEXT NOT NULL | `'pykrx'` 또는 `'yfinance'` |
+| `asset_type` | TEXT NOT NULL | `'index'` 또는 `'etf'` |
+| `name` | TEXT | 종목명 |
+
+- PK: (`symbol`, `date`)
+- 인덱스: `idx_market_prices_symbol_date`
+
+### 8. `market_watchlist`
+
+모니터링 대상 종목 목록.
+
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| `symbol` | TEXT PRIMARY KEY | 종목 코드 |
+| `name` | TEXT NOT NULL | 종목명 |
+| `source` | TEXT NOT NULL | `'pykrx'` 또는 `'yfinance'` |
+| `asset_type` | TEXT NOT NULL | `'index'` 또는 `'etf'` |
+| `category` | TEXT | 카테고리 (`'market_cap'`, `'equal_weight'` 등) |
+| `is_active` | INTEGER | 활성화 여부 (1=활성) |
+| `added_date` | TEXT | 추가일 |
+| `notes` | TEXT | 비고 |
+
+### 9. `market_update_log`
+
+시장 데이터 fetch 이력.
+
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| `id` | INTEGER PK AUTOINCREMENT | 로그 ID |
+| `symbol` | TEXT NOT NULL | 종목 코드 |
+| `fetch_date` | TEXT NOT NULL | fetch 실행일 |
+| `records_added` | INTEGER | 추가된 레코드 수 |
+| `status` | TEXT | 상태 |
+| `message` | TEXT | 메시지 |
+| `updated_at` | TEXT | 로그 생성 시각 |
+
+- 인덱스: `idx_market_update_log_symbol_fetch`
+
 ## 아키텍처
 
 ```
@@ -285,10 +351,16 @@ from myquant.macro_db import fetch_all, init_db
 
 ## 보안
 
-- API 키는 `.env` 파일에 저장하고 Git에 포함하지 마세요.
+- API 키와 인증 정보는 `.env` 파일에 저장하고 Git에 포함하지 마세요.
+- `.env` 파일에 포함된 키:
+  - `FRED_API` — FRED API 키
+  - `ECOS_API` — ECOS API 키
+  - `KRX_ID` — 한국거래소 로그인 ID
+  - `KRX_PW` — 한국거래소 로그인 비밀번호
 - 모든 모듈은 예외 메시지에서 API 키를 마스킹합니다.
 - FRED 요청은 HTTPS와 SSL 인증서 검증을 사용합니다.
 - ECOS는 공개 API가 HTTP만 지원합니다. URL path에 인증키가 포함되므로, 네트워크 트래픽이 노출될 가능성이 있습니다. 이는 ECOS API의 한계이며, 클라이언트 차원에서 해결할 수 없습니다.
+- pykrx는 KRX 로그인 후 1시간 동안 유효합니다.
 
 ## 테스트
 

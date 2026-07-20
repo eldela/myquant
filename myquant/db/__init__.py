@@ -30,6 +30,17 @@ from myquant.db.treasury import (
     get_latest_auction,
     get_latest_debt,
 )
+from myquant.db.market import (
+    init_market_tables,
+    seed_watchlist,
+    fetch_market_data,
+    fetch_all_market_data,
+    get_market_history,
+    get_latest_price,
+    get_market_status,
+    add_to_watchlist,
+    get_watchlist,
+)
 
 __all__ = [
     "CORE_SERIES",
@@ -53,4 +64,14 @@ __all__ = [
     "AUCTIONS_START_DATE",
     "PAGE_SIZE",
     "migrate_legacy_dbs",
+    # Market
+    "init_market_tables",
+    "seed_watchlist",
+    "fetch_market_data",
+    "fetch_all_market_data",
+    "get_market_history",
+    "get_latest_price",
+    "get_market_status",
+    "add_to_watchlist",
+    "get_watchlist",
 ]
