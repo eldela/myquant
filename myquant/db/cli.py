@@ -27,6 +27,13 @@ from myquant.db.market import (
     get_market_history,
     get_market_status,
 )
+from myquant.db.normalization import (
+    init_normalization_tables,
+    normalize_all,
+    normalize_market_data,
+    normalize_series,
+    get_normalized_status,
+)
 
 
 def _status(db_path: Path = DEFAULT_DB_PATH) -> None:
@@ -99,6 +106,44 @@ def _main() -> None:
     )
     market_history_p.add_argument("symbol", help="Symbol to query (e.g. KOSPI, SPY)")
 
+    # Normalization commands
+    subparsers.add_parser(
+        "init-normalization", help="Initialize normalized_daily table and indexes"
+    )
+
+    normalize_p = subparsers.add_parser(
+        "normalize", help="Normalize macro series and market data to daily frequency"
+    )
+    normalize_p.add_argument(
+        "--series",
+        default=None,
+        help="Normalize only a single series/symbol (default: all)",
+    )
+    normalize_p.add_argument(
+        "--start-date",
+        default=None,
+        help="ISO start date for the normalization window",
+    )
+    normalize_p.add_argument(
+        "--end-date",
+        default=None,
+        help="ISO end date for the normalization window",
+    )
+    normalize_p.add_argument(
+        "--market-only",
+        action="store_true",
+        help="Normalize only market prices, skipping macro series",
+    )
+    normalize_p.add_argument(
+        "--macro-only",
+        action="store_true",
+        help="Normalize only macro series, skipping market prices",
+    )
+
+    subparsers.add_parser(
+        "normalized-status", help="Show normalization status"
+    )
+
     migrate_p = subparsers.add_parser(
         "migrate", help="Migrate data from legacy DBs into macro.db"
     )
@@ -140,6 +185,59 @@ def _main() -> None:
         df = get_market_history(args.symbol, days=90, db_path=args.db_path)
         if df.empty:
             print(f"No data found for {args.symbol}")
+        else:
+            print(df.to_string(index=False))
+    elif args.command == "init-normalization":
+        init_normalization_tables(args.db_path)
+        print(f"Initialized normalization tables at {args.db_path}")
+    elif args.command == "normalize":
+        if args.market_only and args.macro_only:
+            print("Error: --market-only and --macro-only cannot be used together")
+            return
+        if args.series is not None:
+            rows = normalize_series(
+                args.series,
+                start_date=args.start_date,
+                end_date=args.end_date,
+                db_path=args.db_path,
+            )
+            print(f"Normalized {args.series}: {rows} rows")
+        elif args.market_only:
+            results = normalize_market_data(
+                start_date=args.start_date,
+                end_date=args.end_date,
+                db_path=args.db_path,
+            )
+            total = sum(results.values())
+            print(f"Normalized {len(results)} market symbols, {total} total rows")
+        elif args.macro_only:
+            results = normalize_all(
+                start_date=args.start_date,
+                end_date=args.end_date,
+                db_path=args.db_path,
+            )
+            total = sum(results.values())
+            print(f"Normalized {len(results)} macro series, {total} total rows")
+        else:
+            macro_results = normalize_all(
+                start_date=args.start_date,
+                end_date=args.end_date,
+                db_path=args.db_path,
+            )
+            market_results = normalize_market_data(
+                start_date=args.start_date,
+                end_date=args.end_date,
+                db_path=args.db_path,
+            )
+            total = sum(macro_results.values()) + sum(market_results.values())
+            print(
+                f"Normalized {len(macro_results)} macro series and "
+                f"{len(market_results)} market symbols, {total} total rows"
+            )
+    elif args.command == "normalized-status":
+        df = get_normalized_status(args.db_path)
+        if df.empty:
+            print("No normalized data")
         else:
             print(df.to_string(index=False))
     elif args.command == "migrate":

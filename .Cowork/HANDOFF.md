@@ -1,6 +1,6 @@
 # HANDOFF.md — myquant project
 
-**Last updated:** 2026-07-20
+**Last updated:** 2026-07-21
 
 ## What This Project Is
 
@@ -10,7 +10,21 @@ A personal macro-economic data collection system. Fetches financial/economic dat
 **Stack:** Python 3.10+, pandas, requests, python-dotenv, sqlite3
 **Virtual env:** `~/projects/myquant/src/.venv`
 
-## Recent Major Change (2026-07-20)
+## Recent Major Changes
+
+### 2026-07-21 — Daily normalization layer
+
+Added a unified daily-frequency normalization layer on top of the existing macro and market data.
+
+**What changed:**
+- New module: `myquant/db/normalization.py`
+- New table: `normalized_daily` with indexes `idx_normalized_daily_series_date` and `idx_normalized_daily_date`
+- Resamples macro series (`observations`) and market prices (`market_prices`) to daily frequency
+- FRED/ECOS macro series get `asset_type='macro'`; market symbols keep their `index`/`etf` type
+- New CLI commands: `init-normalization`, `normalize`, `normalized-status`
+- New tests: `tests/test_normalization.py` (13 tests)
+
+### 2026-07-20 — Unified database architecture
 
 The three previously separate database modules (`fred_db.py`, `ecos_db.py`, `treasury_db.py`) have been **unified** into a single `myquant.db` package backed by one `macro.db` file. The old modules remain as **deprecated shims** that delegate to the new unified module.
 
@@ -33,12 +47,13 @@ myquant/
 │   ├── ecos.db              ← Legacy (migrate to macro.db)
 │   └── treasury.db          ← Legacy (migrate to macro.db)
 └── src/                     ← Main package (git repo)
-    ├── .env                 ← API keys (FRED_API, ECOS_API) — NEVER commit
+    ├── .env                 ← API keys (FRED_API, ECOS_API, KRX_ID, KRX_PW) — NEVER commit
     ├── .gitignore
     ├── pyproject.toml
     ├── requirements.txt
     ├── tests/
-    │   └── test_macro_db.py ← 55 unit tests
+    │   ├── test_macro_db.py    ← 55 unit tests
+    │   └── test_normalization.py ← 13 normalization tests (NEW)
     └── myquant/
         ├── __init__.py      ← Lazy imports for deprecated shims
         ├── fred.py          ← FRED API client (unchanged)
@@ -55,7 +70,8 @@ myquant/
             ├── ecos.py      ← ECOS-specific fetch logic
             ├── treasury.py  ← Treasury fetch/query functions
             ├── migration.py ← Legacy DB → macro.db migration
-            └── cli.py       ← CLI entry point (_main, _status)
+            ├── cli.py       ← CLI entry point (_main, _status)
+            └── normalization.py ← Daily normalization (NEW)
 ```
 
 ## Data Sources
@@ -106,12 +122,16 @@ myquant/
 ## Unified Database Schema (macro.db)
 
 ```
-series          — FRED + ECOS metadata (id, title, source, frequency, cycle, units, ...)
-observations    — Time-series data points (series_id, date, value, realtime_start, realtime_end)
-update_log      — Fetch history for series-based data
-debt            — Treasury Debt to the Penny (record_date, amounts)
-auctions        — Treasury auction results (auction_date, cusip, rates, amounts)
-fetch_log       — Treasury fetch history
+series              — FRED + ECOS metadata (id, title, source, frequency, cycle, units, ...)
+observations        — Time-series data points (series_id, date, value, realtime_start, realtime_end)
+update_log          — Fetch history for series-based data
+debt                — Treasury Debt to the Penny (record_date, amounts)
+auctions            — Treasury auction results (auction_date, cusip, rates, amounts)
+fetch_log           — Treasury fetch history
+market_prices       — Daily OHLCV/adjusted close for watchlist symbols
+market_watchlist    — Symbols to monitor
+market_update_log   — Market fetch history
+normalized_daily    — Unified daily-frequency view of macro + market data (NEW)
 ```
 
 Key design decisions:
@@ -119,6 +139,9 @@ Key design decisions:
 - `cycle` column in `series` table: 'D', 'W', 'M', 'Q', 'A' (for ECOS date formatting)
 - Treasury tables are separate (not series-shaped data)
 - ECOS `realtime_start`/`realtime_end` are set to NULL during migration (ECOS has no realtime metadata)
+- `normalized_daily` is derived from `observations` and `market_prices`; use `normalize` CLI to refresh
+- `normalized_daily.source` check constraint: 'FRED', 'ECOS', 'pykrx', 'yfinance'
+- `normalized_daily.asset_type` check constraint: 'macro', 'index', 'etf'
 
 ## fetch_due Logic
 
@@ -144,12 +167,26 @@ source .venv/bin/activate
 # Initialize database (create tables + seed 28 series)
 python -m myquant.macro_db init
 
+# Initialize market tables and watchlist
+python -m myquant.macro_db init-market
+
+# Initialize normalized_daily table
+python -m myquant.macro_db init-normalization
+
 # Fetch all data (FRED + ECOS + Treasury)
 python -m myquant.macro_db fetch-all
 
-# Fetch specific source
-python -m myquant.macro_db fetch-all --source fred
-python -m myquant.macro_db fetch-all --source ecos
+# Fetch market data
+python -m myquant.macro_db fetch-market
+
+# Normalize all data to daily frequency
+python -m myquant.macro_db normalize
+
+# Normalize a single series or symbol
+python -m myquant.macro_db normalize --series DGS10
+
+# Show normalization status
+python -m myquant.macro_db normalized-status
 
 # Fetch only due series (respects frequency scheduling)
 python -m myquant.macro_db fetch-due
@@ -190,11 +227,21 @@ Migration is **idempotent** — running twice produces no duplicate rows. It:
 3. **ECOS item codes** — Must be looked up via `StatisticItemList` before adding new series. Codes are not intuitive (e.g., "0101000" for base rate, "ABA1" for M1).
 4. **No automated scheduling yet** — `fetch_due()` exists but needs cron/launchd to run periodically.
 
+## Current Status
+
+- [x] Unified DB architecture with single `macro.db`
+- [x] FRED/ECOS/Treasury fetch and storage
+- [x] Market data (pykrx/yfinance) fetch and storage
+- [x] Daily normalization layer (`normalized_daily`)
+- [ ] Automated scheduling for periodic fetches
+- [ ] Dashboard/analysis scripts
+
 ## What to Do Next
 
 - **Schedule periodic fetches:** Set up macOS launchd or cron to run `python -m myquant.macro_db fetch-due` daily
+- **Refresh normalization:** Run `python -m myquant.macro_db normalize` after each fetch cycle
 - **Add gold price API:** goldapi.io or similar, store in macro.db
-- **Dashboard/analysis:** Build analysis scripts on top of the collected data
+- **Dashboard/analysis:** Build analysis scripts on top of `normalized_daily`
 - **ECOS expansion:** Add more Korean series (found via StatisticTableList search)
 - **Remove deprecated shims:** Once all external scripts are updated to use `myquant.macro_db`, remove `fred_db.py`, `ecos_db.py`, `treasury_db.py`
 
@@ -203,10 +250,10 @@ Migration is **idempotent** — running twice produces no duplicate rows. It:
 ```bash
 cd ~/projects/myquant/src
 source .venv/bin/activate
-pytest tests/ -v
+pytest tests/ -q
 ```
 
-55 tests covering:
+68 tests covering:
 - Schema creation and validation (10 tests)
 - FRED fetch with mocked API (6 tests)
 - ECOS fetch with mocked API (7 tests)
@@ -214,3 +261,5 @@ pytest tests/ -v
 - Migration idempotency (5 tests)
 - CLI commands (10 tests)
 - Query functions and fetch window resolution (5 tests)
+- Normalization resampling and integration (7 tests)
+- Normalization table/query helpers (6 tests)

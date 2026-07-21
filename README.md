@@ -52,6 +52,13 @@ python -m myquant.macro_db fetch-auctions
 
 # 상태 확인
 python -m myquant.macro_db status
+python -m myquant.macro_db market-status
+
+# 데이터 정규화 (일간 통합 테이블 생성)
+python -m myquant.macro_db init-normalization
+python -m myquant.macro_db normalize
+python -m myquant.macro_db normalize --series DGS10
+python -m myquant.macro_db normalized-status
 ```
 
 ## 주요 시리즈
@@ -118,6 +125,9 @@ python -m myquant.macro_db status
 | `fetch-market` | watchlist의 모든 종목 가격 데이터를 수집합니다. | `--db-path` |
 | `market-status` | 시장 모니터링 상태를 확인합니다. | `--db-path` |
 | `market-history <symbol>` | 특정 종목의 가격 이력을 조회합니다. | `--db-path` |
+| `init-normalization` | `normalized_daily` 정규화 테이블과 인덱스를 생성합니다. | `--db-path` |
+| `normalize` | 매크로 시리즈와 시장 데이터를 일간으로 정규화하여 저장합니다. | `--series`, `--start-date`, `--end-date`, `--market-only`, `--macro-only`, `--db-path` |
+| `normalized-status` | 정규화된 데이터의 시리즈별 행 수와 최근/최종일을 출력합니다. | `--db-path` |
 
 ### 갱신 일정
 
@@ -279,6 +289,29 @@ Treasury 데이터셋별 fetch 이력.
 
 - 인덱스: `idx_market_update_log_symbol_fetch`
 
+### 10. `normalized_daily`
+
+모든 빈도의 매크로 시리즈(FRED/ECOS)와 시장 가격 데이터를 일간(D)으로 변환하여 통합 저장합니다.
+
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| `series_id` | TEXT NOT NULL | 시리즈 ID 또는 종목 코드 |
+| `date` | TEXT NOT NULL | ISO 8601 날짜 |
+| `value` | REAL | 정규화된 관측값/가격 |
+| `source` | TEXT NOT NULL | `'FRED'`, `'ECOS'`, `'pykrx'`, `'yfinance'` |
+| `asset_type` | TEXT | `'macro'`, `'index'`, `'etf'` |
+
+- PK: (`series_id`, `date`)
+- 인덱스: `idx_normalized_daily_series_date`, `idx_normalized_daily_date`
+
+#### 정규화 규칙
+
+| 원래 주기 | 변환 방법 | 예시 |
+|-----------|-----------|------|
+| D (일간) | 그대로 복사 | 2024-01-15 → 2024-01-15 |
+| M (월간) | 해당월 1일에 값 배정, 나머지 forward fill | 2024-01 → 2024-01-01 ~ 2024-01-31 |
+| Q (분기) | 해당 분기 첫날에 값 배정, 나머지 forward fill | 2024Q1 → 2024-01-01 ~ 2024-03-31 |
+
 ## 아키텍처
 
 ```
@@ -364,13 +397,13 @@ from myquant.macro_db import fetch_all, init_db
 
 ## 테스트
 
-`pytest`로 55개 unit test를 실행할 수 있습니다.
+`pytest`로 68개 unit test를 실행할 수 있습니다.
 
 ```bash
-pytest tests/test_macro_db.py -q
+pytest tests/ -q
 ```
 
-테스트는 `myquant.macro_db`의 schema, fetch, migration, CLI 동작을 검증합니다. 실제 API 호출은 `unittest.mock`으로 대체됩니다.
+테스트는 `myquant.macro_db`와 `myquant.db.normalization`의 schema, fetch, migration, CLI, 정규화 동작을 검증합니다. 실제 API 호출은 `unittest.mock`으로 대체됩니다.
 
 ## 설치
 

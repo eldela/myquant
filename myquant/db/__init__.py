@@ -41,6 +41,14 @@ from myquant.db.market import (
     add_to_watchlist,
     get_watchlist,
 )
+from myquant.db.normalization import (
+    init_normalization_tables,
+    normalize_all,
+    normalize_market_data,
+    normalize_series,
+    get_normalized_history,
+    get_normalized_status,
+)
 
 __all__ = [
     "CORE_SERIES",
@@ -74,4 +82,11 @@ __all__ = [
     "get_market_status",
     "add_to_watchlist",
     "get_watchlist",
+    # Normalization
+    "init_normalization_tables",
+    "normalize_series",
+    "normalize_all",
+    "normalize_market_data",
+    "get_normalized_history",
+    "get_normalized_status",
 ]
